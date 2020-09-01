@@ -1,0 +1,126 @@
+apply plugin: 'maven-publish'
+
+/**
+ *  VERSION_NAME
+ *  GROUP
+ *  RELEASE_REPOSITORY_URL
+ *  SNAPSHOT_REPOSITORY_URL
+ *  USERNAME
+ *  PASSWORD
+ *  ARTIFACT_ID
+ */
+
+def getVersionName() {
+    return hasProperty('VERSION_NAME') ? VERSION_NAME : android.defaultConfig.versionName
+}
+
+def getGroup() {
+    return hasProperty('GROUP') ? GROUP : "com.mysoft.libs"
+}
+
+def getReleaseRepositoryUrl() {
+    return hasProperty('RELEASE_REPOSITORY_URL') ? RELEASE_REPOSITORY_URL : "http://10.5.223.107:8088/repository/maven-releases/"
+}
+
+def getSnapshotRepositoryUrl() {
+    return hasProperty('SNAPSHOT_REPOSITORY_URL') ? SNAPSHOT_REPOSITORY_URL : "http://10.5.223.107:8088/repository/maven-snapshots/"
+}
+
+def getRepositoryUsername() {
+    return hasProperty('USERNAME') ? USERNAME : "repo_user"
+}
+
+def getRepositoryPassword() {
+    return hasProperty('PASSWORD') ? PASSWORD : "12345"
+}
+
+def getArtifactId() {
+    return hasProperty('ARTIFACT_ID') ? ARTIFACT_ID : project.name
+}
+
+afterEvaluate { project ->
+    if (project.getPlugins().hasPlugin('com.android.application') || project.getPlugins().hasPlugin('com.android.library')) {
+        task androidJavadocs(type: Javadoc) {
+            source = android.sourceSets.main.java.source
+            classpath += project.files(android.getBootClasspath().join(File.pathSeparator))
+            excludes = ['**/*.kt']
+        }
+
+        task androidJavadocsJar(type: Jar, dependsOn: androidJavadocs) {
+            archiveClassifier.convention('javadoc')
+            archiveClassifier.set('javadoc')
+            from androidJavadocs.destinationDir
+        }
+
+        task androidSourcesJar(type: Jar) {
+            archiveClassifier.convention('sources')
+            archiveClassifier.set('sources')
+            from android.sourceSets.main.java.source
+        }
+    }
+
+    if (JavaVersion.current().isJava8Compatible()) {
+        allprojects {
+            tasks.withType(Javadoc) {
+                options.addStringOption('Xdoclint:none', '-quiet')
+            }
+        }
+    }
+
+    if (JavaVersion.current().isJava9Compatible()) {
+        allprojects {
+            tasks.withType(Javadoc) {
+                options.addBooleanOption('html5', true)
+            }
+        }
+    }
+
+    artifacts {
+        if (project.getPlugins().hasPlugin('com.android.application') || project.getPlugins().hasPlugin('com.android.library')) {
+            archives androidSourcesJar
+            archives androidJavadocsJar
+        }
+    }
+
+    android.libraryVariants.all { variant ->
+        tasks.androidJavadocs.doFirst {
+            classpath += files(variant.javaCompileProvider.get().classpath.files.join(File.pathSeparator))
+        }
+    }
+
+    def groupId = getGroup()
+    def artifactId = getArtifactId()
+    def version = getVersionName()
+
+    publishing {
+        repositories {
+            maven {
+                def isSnapshot = getVersionName().toUpperCase().contains("SNAPSHOT")
+                url = isSnapshot ? getSnapshotRepositoryUrl() : getReleaseRepositoryUrl()
+
+                println("--------------------------------------")
+                println("url: $url")
+                println("groupId: ${groupId}, artifactId: ${artifactId}, version: ${version}")
+                println("--------------------------------------")
+
+                credentials(PasswordCredentials) {
+                    username = getRepositoryUsername()
+                    password = getRepositoryPassword()
+                }
+            }
+        }
+    }
+
+    components.forEach { component ->
+        publishing.publications.create(component.name, MavenPublication.class) { publication ->
+            publication.groupId = groupId
+            publication.artifactId = artifactId
+            publication.version = version
+
+            publication.artifact androidSourcesJar
+            publication.artifact androidJavadocsJar
+
+            publication.from component
+        }
+    }
+}
